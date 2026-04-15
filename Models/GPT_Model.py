@@ -10,10 +10,10 @@ class GPTConfig:
   num_layers: int = 6
   vocab_size: int = 50257
   embedding_dim: int = 768
-  block_size: int = 256
-  seq_len: int = 256
+  block_size: int = 1024
   lag_behind: int = 1
   dropout : float = .1
+  pad_token_id : int = 50256
 
 
 class GPT2_Lag(nn.Module):
@@ -63,7 +63,8 @@ class GPT2_Lag(nn.Module):
     loss = None
     if y is not None:
         # Forward loss: standard next-token prediction
-        loss_fwd = F.cross_entropy(logits_pre.view(-1, V), y.view(-1))
+        loss_fwd = F.cross_entropy(logits_pre.view(-1, V), y.view(-1),
+                ignore_index=self.config.pad_token_id) #Don't predict on padding tokens
 
         # Backward loss: position i predicts input token at i - skip_dist
         # Skip first skip_dist positions (no valid target exists)
@@ -101,9 +102,9 @@ class LayerBlock(nn.Module):
 class MLP(nn.Module):
   def __init__(self, config: GPTConfig):
     super().__init__()
-    self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim, bias=False)
+    self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim)
     self.gelu = nn.GELU(approximate='tanh')
-    self.c_proj = nn.Linear(4*config.embedding_dim, config.embedding_dim, bias=False)
+    self.c_proj = nn.Linear(4*config.embedding_dim, config.embedding_dim)
     self.drop   = nn.Dropout(config.dropout)
 
   def forward(self, x):
@@ -118,7 +119,7 @@ class AttentionMultiHeadFused(nn.Module):
     super().__init__()
     self.config = config
     self.device = device
-    self.w_qkv = nn.Linear(config.embedding_dim, 3*config.embedding_dim) #does bias matter here?
+    self.w_qkv = nn.Linear(config.embedding_dim, 3*config.embedding_dim)
     self.output = nn.Linear(config.embedding_dim, config.embedding_dim)
     self.attn_drop = config.dropout  # passed to scaled_dot_product_attention
     self.resid_drop = nn.Dropout(config.dropout)  # add this
@@ -139,7 +140,7 @@ class AttentionMultiHeadFused(nn.Module):
     # else:
     #   diagonal = 1
     #mask = torch.triu(mask, diagonal=diagonal)
-
+    dropout_p=self.attn_drop if self.training else 0.0
     if future:
       skip_dist = self.config.lag_behind + 1
       mask = torch.tril(torch.ones(SL, SL, device=x.device)).bool()
@@ -147,15 +148,11 @@ class AttentionMultiHeadFused(nn.Module):
       rows = torch.arange(skip_dist, SL, device=x.device)
       mask[rows, rows - skip_dist] = False
       mask = torch.where(mask, 0.0, float('-inf'))
-      attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+      attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=dropout_p)
     else:
-      attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+      attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
 
 
-    # Allow full attention for the specified row
-
-    attn_out = F.scaled_dot_product_attention(q,k,v,attn_mask=mask,
-            dropout_p=self.attn_drop if self.training else 0.0)
     attn_out = attn_out.transpose(1,2).contiguous().view(B, SL, ED)
     y = self.output(attn_out)
     y = self.resid_drop(y)

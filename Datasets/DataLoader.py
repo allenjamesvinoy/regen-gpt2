@@ -51,7 +51,7 @@ class TinyShakespeareDataLoader:
     return x, y, y2
 
 class TinyStoriesDataLoader:
-    def __init__(self, tokenizer_name="gpt2", max_length=512, batch_size=32):
+    def __init__(self, tokenizer_name="gpt2", max_length=512, batch_size=32, num_train=100000, num_eval=10000):
         self.max_length = max_length
         self.batch_size = batch_size
 
@@ -59,16 +59,19 @@ class TinyStoriesDataLoader:
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
         ds = load_dataset("roneneldan/TinyStories")
-        ds["train"]      = ds["train"].select(range(100000))
-        ds["validation"] = ds["validation"].select(range(10000))
+        ds["train"]      = ds["train"].select(range(num_train))
+        ds["validation"] = ds["validation"].select(range(num_eval))
         ds = ds.map(self._tokenize, batched=True, remove_columns=["text"])
-        ds.set_format(type="torch", columns=["input_ids", "attention_mask"])
+        ds.set_format(type="torch", columns=["input_ids"])
 
         self.train_loader = DataLoader(ds["train"], batch_size=batch_size, shuffle=True)
         self.valid_loader = DataLoader(ds["validation"], batch_size=batch_size)
 
     def _tokenize(self, batch):
         return self.tokenizer(batch["text"], truncation=True, padding="max_length", max_length=self.max_length)
+    
+    def pad_token(self):
+       return self.tokenizer.pad_token_id
 
     def get_data(self):
         return self.train_loader, self.valid_loader
