@@ -1,4 +1,5 @@
 import tiktoken
+import numpy as np
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
@@ -75,3 +76,57 @@ class TinyStoriesDataLoader:
 
     def get_data(self):
         return self.train_loader, self.valid_loader
+    
+
+
+
+class CombinedBinDataLoader:
+    def __init__(self, filename, B, SL, config, split='train'):
+        self.B = B
+        self.SL = SL
+        self.config = config
+        
+        # Memory-map the binary file (stays on disk, essentially 0 RAM usage)
+        self.data = np.memmap(filename, dtype=np.uint16, mode='r')
+        
+        # Calculate the 90% split index
+        n = int(0.9 * len(self.data))
+        
+        if split == 'train':
+            self.split_data = self.data[:n]
+        else:
+            self.split_data = self.data[n:]
+            
+        self.cursor = 0
+        print(f"Initialized {split} loader with {len(self.split_data):,} tokens.")
+
+    def get_data(self):
+        # 1. Fetch the continuous chunk from disk and convert to torch.long (int64)
+        # chunk = self.split_data[self.cursor : self.cursor + self.B * self.SL + 1]
+        # buf = torch.from_numpy(chunk.astype(np.int64))
+        buf = torch.from_numpy(self.split_data[self.cursor : self.cursor + self.B * self.SL + 1].astype(np.int32))
+        # 2. Standard autoregressive shifting
+        x = buf[:-1].view(self.B, self.SL)
+        y = buf[1:].view(self.B, self.SL)
+        
+        # 3. --- Y2 LAG BEHIND LOGIC ---
+        k = self.config.lag_behind
+        shift = k 
+
+        # Fill with -100 (PyTorch's default ignore_index for Cross Entropy)
+        y2 = torch.full_like(x, -100) 
+
+        # # Shift the sequence to the right by 'shift' steps
+        # if shift > 0:
+        #     y2[:, shift:] = x[:, :-shift]
+        # elif shift == 0:
+        #     y2 = x.clone()
+
+        # # 4. Advance the cursor for the next batch
+        # self.cursor += self.B * self.SL
+        
+        # # Reset cursor if we hit the end of our split
+        # if self.cursor + (self.B * self.SL + 1) > len(self.split_data):
+        #     self.cursor = 0
+            
+        return x, y, y2
