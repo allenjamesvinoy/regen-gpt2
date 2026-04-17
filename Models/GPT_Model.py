@@ -39,7 +39,7 @@ class GPT2_Lag(nn.Module):
   def forward(self, x, y=None, lam=0.5):
     B, SL = x.size()
     V = self.config.vocab_size
-    skip_dist = self.config.lag_behind + 1
+    skip_dist = self.config.lag_behind
 
     pos = torch.arange(0, SL, dtype=torch.long).to(self.device)
     pos_emb = self.transformer.wpe(pos)
@@ -142,7 +142,7 @@ class AttentionMultiHeadFused(nn.Module):
     #mask = torch.triu(mask, diagonal=diagonal)
     dropout_p=self.attn_drop if self.training else 0.0
     if future:
-      skip_dist = self.config.lag_behind + 1
+      skip_dist = self.config.lag_behind
       mask = torch.tril(torch.ones(SL, SL, device=x.device)).bool()
       # Punch out t_{i - skip_dist} for each row i >= skip_dist
       rows = torch.arange(skip_dist, SL, device=x.device)
