@@ -10,3 +10,4 @@ __pycache__/
 *.cpython*
 
 __pycache__/
+Models/model_weights.pth
