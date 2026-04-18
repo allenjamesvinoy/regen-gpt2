@@ -126,7 +126,7 @@ class CombinedBinDataLoader:
 
         self.rng = np.random.default_rng(seed)
         self._shuffle()
-        self.num_grabs = 0
+        self.idx = 0
 
         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
 
@@ -150,16 +150,30 @@ class CombinedBinDataLoader:
     def _shuffle(self):
         self.shuffled_starts = self.rng.permutation(self.split_starts)
 
+    # def get_data(self):
+    #     start = self.shuffled_starts[self.num_grabs]
+    #     buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
+
+    #     x = buf[:-1].view(self.B, self.SL)
+    #     y = buf[1:].view(self.B, self.SL)
+
+    #     # self.num_grabs += 1
+    #     # if self.num_grabs >= len(self.shuffled_starts):
+    #     #     self.num_grabs = 0
+    #     #     self._shuffle()
+
+    #     return x, y, None
+
+
     def get_data(self):
-        start = self.shuffled_starts[self.num_grabs]
-        buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int32))
+        start = self.shuffled_starts[self.idx]
+        buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
+        x = buf[:-1].view(self.B, self.SL).pin_memory()
+        y = buf[1:].view(self.B, self.SL).pin_memory()
 
-        x = buf[:-1].view(self.B, self.SL)
-        y = buf[1:].view(self.B, self.SL)
-
-        # self.num_grabs += 1
-        # if self.num_grabs >= len(self.shuffled_starts):
-        #     self.num_grabs = 0
-        #     self._shuffle()
+        self.idx += 1
+        if self.idx >= len(self.shuffled_starts):
+            self.idx = 0
+            self._shuffle()
 
         return x, y, None
