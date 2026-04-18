@@ -48,31 +48,31 @@ class GPT2_Lag(nn.Module):
     x_shared = pos_emb + tok_emb
 
     x_pre = x_shared
-    x_fut = x_shared
+    #x_fut = x_shared
 
     for layer_block in self.transformer.h:
       x_pre = layer_block(x_pre, False)
-      x_fut = layer_block(x_fut, True)
+      #x_fut = layer_block(x_fut, True)
 
     x_pre = self.transformer.ln_f(x_pre)
-    x_fut = self.transformer.ln_f(x_fut)
+    #x_fut = self.transformer.ln_f(x_fut)
 
     logits_pre = self.lm_head(x_pre)
-    logits_fut = self.lm_head(x_fut)
+    #logits_fut = self.lm_head(x_fut)
+    logits_fut = None
 
     loss = None
     if y is not None:
         # Forward loss: standard next-token prediction
-        loss_fwd = F.cross_entropy(logits_pre.view(-1, V), y.view(-1),
-                ignore_index=self.config.pad_token_id) #Don't predict on padding tokens
+        loss_fwd = F.cross_entropy(logits_pre.view(-1, V), y.view(-1)) #Don't predict on padding tokens
 
         # Backward loss: position i predicts input token at i - skip_dist
         # Skip first skip_dist positions (no valid target exists)
-        bwd_targets = x[:, :-skip_dist]        # tokens at indices 0..SL-skip_dist-1
-        bwd_logits = logits_fut[:, skip_dist:]  # predictions from positions skip_dist..SL-1
-        loss_bwd = F.cross_entropy(bwd_logits.reshape(-1, V), bwd_targets.reshape(-1))
-
-        loss = (1 - lam) * loss_fwd + lam * loss_bwd
+        #bwd_targets = x[:, :-skip_dist]        # tokens at indices 0..SL-skip_dist-1
+        #bwd_logits = logits_fut[:, skip_dist:]  # predictions from positions skip_dist..SL-1
+        #loss_bwd = F.cross_entropy(bwd_logits.reshape(-1, V), bwd_targets.reshape(-1))
+        loss_bwd = 0  # Placeholder since backward loss is not implemented
+        loss = loss_fwd
 
     return logits_pre, logits_fut, loss
 
