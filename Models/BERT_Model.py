@@ -38,108 +38,159 @@ class BERT_Lag(nn.Module):
 
 
 
-  # def forward(self, x, y=None):
-  #   B, N = x.size()
-  #   V = self.config.vocab_size
-
-  #   #Split the batch in half so that  each token is only seen once but both losses are trained
-  #   half = B // 2
-  #   # Split batch — each objective gets its own sequences
-  #   x_fwd, x_bwd = x[:half], x[half:]
-  #   y_fwd = y[:half] if y is not None else None
-
-  #   pos = torch.arange(0, N, dtype=torch.long).to(self.device)
-  #   pos_emb = self.transformer.wpe(pos)
-
-  #   #Randomly sample a position to be the simulated endpoint for group regeneration
-  #   sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,)).item()
-  #   start = int(sample_pos * self.config.range_low)
-  #   end = int(sample_pos * self.config.range_high)
-  #   if end <= start:
-  #     end = start + 1
-
-
-  #   targets = y[half:, start:end] if y is not None else None
-  #   x_bwd = x_bwd.clone()
-  #   x_bwd[:, start:end] = self.config.pad_token_id
-  #   x_bwd[:, sample_pos:] = self.config.pad_token_id
-    
-  #   #Combine both sequences so they can be passed through together
-  #   x = self.transformer.wte(torch.cat([x_fwd, x_bwd], dim=0)) + pos_emb
-  #   x = self.transformer.drop(x)
-
-
-  #   for layer_block in self.transformer.h:
-  #     x = layer_block(x)
-
-  #   x = self.transformer.ln_f(x)
-  #   x = self.transformer.drop(x)
-
-
-  #   logits = self.lm_head(x)
-  #   logits_fwd, logits_bwd = logits.chunk(2, dim=0)
-
-
-  #   if y is not None:
-  #       # Forward loss: standard next-token prediction
-
-  #       loss_fwd = F.cross_entropy(
-  #           logits_fwd.view(-1, V), 
-  #           y_fwd.view(-1),
-  #           ignore_index=self.config.pad_token_id)
-
-  #       loss_bwd = F.cross_entropy(
-  #           logits_bwd[:, start:end].reshape(-1, V),
-  #           targets.reshape(-1),
-  #           ignore_index=self.config.pad_token_id,
-  #       )
-
-  #   return loss_fwd, loss_bwd
-  
-
-  def forward(self, x, y=None):
-    _, N = x.size()
+  def forward(self, x, y=None, use_fwd=True):
+    B, N = x.size()
     V = self.config.vocab_size
-
-
-    pos = torch.arange(0, N, dtype=torch.long).to(self.device)
+    pos = torch.arange(0, N, dtype=torch.long, device=x.device)
     pos_emb = self.transformer.wpe(pos)
 
-    #Combine both sequences so they can be passed through together
-    x = self.transformer.wte(x) + pos_emb
-    x = self.transformer.drop(x)
-
-
-    for layer_block in self.transformer.h:
-      x = layer_block(x)
-
-    x = self.transformer.ln_f(x)
-    logits_fwd = self.lm_head(x)
-
-
-    if y is not None:
+    if(use_fwd):
+      x_fwd = self.transformer.wte(x) + pos_emb
+      x_fwd = self.transformer.drop(x_fwd)
+      for layer_block in self.transformer.h:
+        x_fwd = layer_block(x_fwd, mask=True)
+      x_fwd = self.transformer.ln_f(x_fwd)
+      logits_fwd = self.lm_head(x_fwd)
+      if y is not None:
         # Forward loss: standard next-token prediction
 
-        loss_fwd = F.cross_entropy(
+        loss = F.cross_entropy(
             logits_fwd.view(-1, V), 
             y.view(-1),
             ignore_index=self.config.pad_token_id)
+    else:
+      sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,), device=x.device)[0]
+      start = (sample_pos * self.config.range_low).long()
+      end = (sample_pos * self.config.range_high).long()
+      end = torch.where(end <= start, start + 1, end)
 
-    return loss_fwd, None # loss_bwd
+      positions = torch.arange(N, device=x.device)
+      mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
+      causal_mask = positions >= sample_pos
+
+      targets = y[:, mask] if y is not None else None
+
+      x_bwd = x.clone()
+      x_bwd = x_bwd.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
+      x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
+
+      x_bwd = self.transformer.wte(x_bwd) + pos_emb
+      x_bwd = self.transformer.drop(x_bwd)
+
+      for layer_block in self.transformer.h:
+        x_bwd = layer_block(x_bwd, mask=False)
+      x_bwd = self.transformer.ln_f(x_bwd)
+      logits_bwd = self.lm_head(x_bwd)
+      
+      if y is not None:
+        loss = F.cross_entropy(
+            # logits_bwd[:, start:end].reshape(-1, V),
+            logits_bwd[:, mask].reshape(-1,V),
+            targets.reshape(-1),
+            ignore_index=self.config.pad_token_id,
+        )
+
+    return loss
+
+
+
+
+
+
+    # #Split the batch in half so that  each token is only seen once but both losses are trained
+    # half = B // 2
+    # # Split batch — each objective gets its own sequences
+    # x_fwd, x_bwd = x[:half], x[half:]
+    # y_fwd = y[:half] if y is not None else None
+    
+
+    
+
+    # #Randomly sample a position to be the simulated endpoint for group regeneration
+    # sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,), device=x.device)[0]
+
+    # start = (sample_pos * self.config.range_low).long()
+    # end = (sample_pos * self.config.range_high).long()
+    # end = torch.where(end <= start, start + 1, end)
+
+    # positions = torch.arange(N, device=x.device)
+    # mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
+    # causal_mask = positions >= sample_pos
+
+
+    # # targets = y[half:, start:end] if y is not None else None
+    # targets = y[half:, mask] if y is not None else None
+
+    # x_bwd = x_bwd.clone()
+    # x_bwd = x_bwd.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
+    # x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
+
+    # # x_bwd[:, start:end] = self.config.pad_token_id
+    # # x_bwd[:, sample_pos:] = self.config.pad_token_id
+    
+    # #Combine both sequences so they can be passed through together
+    # #x = self.transformer.wte(torch.cat([x_fwd, x_bwd], dim=0)) + pos_emb
+    # x_fwd = self.transformer.wte(x_fwd) + pos_emb
+    # x_bwd = self.transformer.wte(x_bwd) + pos_emb
+    # x_fwd = self.transformer.drop(x_fwd)
+    # x_bwd = self.transformer.drop(x_bwd)
+
+
+
+    # for layer_block in self.transformer.h:
+    #   x_fwd = layer_block(x_fwd, mask=True)
+    #   x_bwd = layer_block(x_bwd, mask=False)
+
+    # x_fwd = self.transformer.ln_f(x_fwd)
+    # x_bwd = self.transformer.ln_f(x_bwd)
+
+    # # x = self.transformer.drop(x)
+
+
+    # logits_fwd = self.lm_head(x_fwd)
+    # logits_bwd = self.lm_head(x_bwd)
+    # # logits_fwd, logits_bwd = logits.chunk(2, dim=0)
+
+
+    # if y is not None:
+    #     # Forward loss: standard next-token prediction
+
+    #     loss_fwd = F.cross_entropy(
+    #         logits_fwd.view(-1, V), 
+    #         y_fwd.view(-1),
+    #         ignore_index=self.config.pad_token_id)
+
+    #     loss_bwd = F.cross_entropy(
+    #         # logits_bwd[:, start:end].reshape(-1, V),
+    #         logits_bwd[:, mask].reshape(-1,V),
+    #         targets.reshape(-1),
+    #         ignore_index=self.config.pad_token_id,
+    #     )
+
+    # return loss_fwd, loss_bwd
+  
 
 
 class LayerBlock(nn.Module):
   def __init__(self, config: BERTConfig, device):
     super().__init__()
-    self.ln_1 = nn.LayerNorm(config.embedding_dim)
+    self.ln_1_fwd = nn.LayerNorm(config.embedding_dim)
+    self.ln_1_bwd = nn.LayerNorm(config.embedding_dim)
+
     self.attn = AttentionMultiHeadFused(config, device)
-    self.ln_2 = nn.LayerNorm(config.embedding_dim)
+    self.ln_2_fwd = nn.LayerNorm(config.embedding_dim)
+    self.ln_2_bwd = nn.LayerNorm(config.embedding_dim)
+
     self.mlp = MLP(config)
     
 
-  def forward(self, x):
-    x = x + self.attn(self.ln_1(x))
-    x = x + self.mlp(self.ln_2(x)) #why do we layer-norm before passing mlp?
+  def forward(self, x, mask):
+    if(mask):
+      x = x + self.attn(self.ln_1_fwd(x), mask)
+      x = x + self.mlp(self.ln_2_fwd(x)) 
+    else:
+      x = x + self.attn(self.ln_1_bwd(x), mask)
+      x = x + self.mlp(self.ln_2_bwd(x)) 
     return x
 
 
@@ -168,7 +219,7 @@ class AttentionMultiHeadFused(nn.Module):
     self.attn_drop = config.dropout  # passed to scaled_dot_product_attention
     self.resid_drop = nn.Dropout(config.dropout)  # add this
 
-  def forward(self, x):
+  def forward(self, x, mask=None):
     B,N,ED = x.size()
     qkv = self.w_qkv(x)
     q, k, v = qkv.split(self.config.embedding_dim, dim=2)
@@ -178,8 +229,10 @@ class AttentionMultiHeadFused(nn.Module):
 
     dropout_p=self.attn_drop if self.training else 0.0
 
-    attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
-
+    if(mask):
+      attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
+    else:
+      attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p)
 
     attn_out = attn_out.transpose(1,2).contiguous().view(B, N, ED)
     y = self.output(attn_out)
