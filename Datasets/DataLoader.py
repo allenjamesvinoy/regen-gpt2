@@ -198,7 +198,7 @@ class CombinedBinDataLoader:
         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
 
     @staticmethod
-    def create_loaders(filename, B, SL, config, seed=42):
+    def create_loaders(filename, B, SL, train_config, seed=42):
         data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))  # full copy into RAM
         #data = np.memmap(filename, dtype=np.uint16, mode='r')
         chunk_size = B * SL + 1
@@ -210,9 +210,10 @@ class CombinedBinDataLoader:
         shuffled = rng.permutation(all_starts)
         n = int(0.95 * len(shuffled))
 
-        train_loader = CombinedBinDataLoader(data, shuffled[:n], B, SL, config, seed=seed)
-        val_loader = CombinedBinDataLoader(data, shuffled[n:], B, SL, config, seed=seed + 1)
+        train_loader = CombinedBinDataLoader(data, shuffled[:n], B, SL, train_config, seed=seed)
+        val_loader = CombinedBinDataLoader(data, shuffled[n:], B, SL, train_config, seed=seed + 1)
         return train_loader, val_loader
+        
     def _shuffle(self):
         self.shuffled_starts = self.rng.permutation(self.split_starts)
 

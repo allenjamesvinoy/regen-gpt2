@@ -3,22 +3,26 @@ import torch.nn as nn
 from torch import dropout, embedding
 from dataclasses import dataclass
 import torch.nn.functional as F
+from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from Configs import BERTConfig
 
 
 #A custom dataclass to store the parameters of the model
 #It's defaults are the hyperparameters associated with our trained model
-@dataclass
-class BERTConfig:
-  num_heads: int = 12
-  num_layers: int = 12
-  vocab_size: int = 50257
-  embedding_dim: int = 768
-  block_size: int = 512
-  dropout : float = .1
-  weight_decay : float = .1
-  pad_token_id : int = 50256
-  range_low : float = .5
-  range_high : float = .75
+# @dataclass
+# class BERTConfig:
+#   num_heads: int = 12
+#   num_layers: int = 12
+#   vocab_size: int = 50257
+#   embedding_dim: int = 768
+#   block_size: int = 512
+#   dropout : float = .1
+#   weight_decay : float = .1
+#   pad_token_id : int = 50256
+#   range_low : float = .5
+#   range_high : float = .75
 
 
 class BERT_Lag(nn.Module):
