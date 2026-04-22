@@ -115,23 +115,90 @@ class TinyStoriesDataLoader:
 
 
 
+# class CombinedBinDataLoader:
+#     def __init__(self, data, split_starts, B, SL, config, seed=42):
+#         self.B = B
+#         self.SL = SL
+#         self.config = config
+#         self.chunk_size = B * SL + 1
+#         self.data = data  # shared memmap reference
+#         self.split_starts = split_starts
+
+#         self.rng = np.random.default_rng(seed)
+#         self._shuffle()
+#         self.idx = 0
+
+#         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
+
+#     def create_loaders(filename, B, SL, config, seed=42):
+
+#         data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))  # full copy into RAM
+#         #data = np.memmap(filename, dtype=np.uint16, mode='r')
+#         chunk_size = B * SL + 1
+
+#         all_starts = np.arange(0, len(data) - chunk_size, B * SL, dtype=np.int64)
+
+#         # One shuffle, one split
+#         rng = np.random.default_rng(seed)
+#         shuffled = rng.permutation(all_starts)
+#         n = int(0.95 * len(shuffled))
+
+#         train_loader = CombinedBinDataLoader(data, shuffled[:n], B, SL, config, seed=seed)
+#         val_loader = CombinedBinDataLoader(data, shuffled[n:], B, SL, config, seed=seed + 1)
+#         return train_loader, val_loader
+
+#     def _shuffle(self):
+#         self.shuffled_starts = self.rng.permutation(self.split_starts)
+
+#     # def get_data(self):
+#     #     start = self.shuffled_starts[self.num_grabs]
+#     #     buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
+
+#     #     x = buf[:-1].view(self.B, self.SL)
+#     #     y = buf[1:].view(self.B, self.SL)
+
+#     #     # self.num_grabs += 1
+#     #     # if self.num_grabs >= len(self.shuffled_starts):
+#     #     #     self.num_grabs = 0
+#     #     #     self._shuffle()
+
+#     #     return x, y, None
+
+
+#     def get_data(self):
+#         start = self.shuffled_starts[self.idx]
+#         buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
+#         x = buf[:-1].view(self.B, self.SL)#.pin_memory()
+#         y = buf[1:].view(self.B, self.SL)#.pin_memory()
+
+#         self.idx += 1
+#         if self.idx >= len(self.shuffled_starts):
+#             self.idx = 0
+#             self._shuffle()
+
+#         return x, y, None
+
 class CombinedBinDataLoader:
     def __init__(self, data, split_starts, B, SL, config, seed=42):
         self.B = B
         self.SL = SL
         self.config = config
         self.chunk_size = B * SL + 1
-        self.data = data  # shared memmap reference
+        self.data = data
         self.split_starts = split_starts
-
         self.rng = np.random.default_rng(seed)
         self._shuffle()
         self.idx = 0
 
+        # Prefetch state
+        self._next = None
+        self._thread = None
+        self._prefetch()  # kick off first prefetch immediately
+
         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
 
+    @staticmethod
     def create_loaders(filename, B, SL, config, seed=42):
-
         data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))  # full copy into RAM
         #data = np.memmap(filename, dtype=np.uint16, mode='r')
         chunk_size = B * SL + 1
@@ -141,39 +208,31 @@ class CombinedBinDataLoader:
         # One shuffle, one split
         rng = np.random.default_rng(seed)
         shuffled = rng.permutation(all_starts)
-        n = int(0.9 * len(shuffled))
+        n = int(0.95 * len(shuffled))
 
         train_loader = CombinedBinDataLoader(data, shuffled[:n], B, SL, config, seed=seed)
         val_loader = CombinedBinDataLoader(data, shuffled[n:], B, SL, config, seed=seed + 1)
         return train_loader, val_loader
-
     def _shuffle(self):
         self.shuffled_starts = self.rng.permutation(self.split_starts)
 
-    # def get_data(self):
-    #     start = self.shuffled_starts[self.num_grabs]
-    #     buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
-
-    #     x = buf[:-1].view(self.B, self.SL)
-    #     y = buf[1:].view(self.B, self.SL)
-
-    #     # self.num_grabs += 1
-    #     # if self.num_grabs >= len(self.shuffled_starts):
-    #     #     self.num_grabs = 0
-    #     #     self._shuffle()
-
-    #     return x, y, None
-
-
-    def get_data(self):
+    def _load(self):
         start = self.shuffled_starts[self.idx]
         buf = torch.from_numpy(self.data[start : start + self.chunk_size].astype(np.int64))
-        x = buf[:-1].view(self.B, self.SL).pin_memory()
-        y = buf[1:].view(self.B, self.SL).pin_memory()
-
+        x = buf[:-1].view(self.B, self.SL)
+        y = buf[1:].view(self.B, self.SL)
         self.idx += 1
         if self.idx >= len(self.shuffled_starts):
             self.idx = 0
             self._shuffle()
+        self._next = (x, y)
 
+    def _prefetch(self):
+        self._thread = threading.Thread(target=self._load, daemon=True)
+        self._thread.start()
+
+    def get_data(self):
+        self._thread.join()          # wait for prefetch to finish
+        x, y = self._next
+        self._prefetch()             # immediately kick off next load
         return x, y, None

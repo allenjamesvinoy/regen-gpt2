@@ -4,13 +4,16 @@ from torch import dropout, embedding
 from dataclasses import dataclass
 import torch.nn.functional as F
 
+
+#A custom dataclass to store the parameters of the model
+#It's defaults are the hyperparameters associated with our trained model
 @dataclass
 class BERTConfig:
-  num_heads: int = 6
-  num_layers: int = 6
+  num_heads: int = 12
+  num_layers: int = 12
   vocab_size: int = 50257
   embedding_dim: int = 768
-  block_size: int = 1024
+  block_size: int = 512
   dropout : float = .1
   weight_decay : float = .1
   pad_token_id : int = 50256
@@ -34,140 +37,134 @@ class BERT_Lag(nn.Module):
         )
     )
     self.lm_head = nn.Linear(config.embedding_dim, config.vocab_size, bias=False) #why is bias set as False?
+
     self.transformer.wte.weight = self.lm_head.weight  # weight tying
 
 
 
-  def forward(self, x, y=None, use_fwd=True):
+
+  # def forward(self, x, y=None, use_fwd=True):
+  #   B, N = x.size()
+  #   V = self.config.vocab_size
+  #   pos = torch.arange(0, N, dtype=torch.long, device=x.device)
+  #   pos_emb = self.transformer.wpe(pos)
+
+  #   if(use_fwd):
+  #     x_fwd = self.transformer.wte(x) + pos_emb
+  #     x_fwd = self.transformer.drop(x_fwd)
+  #     for layer_block in self.transformer.h:
+  #       x_fwd = layer_block(x_fwd, mask=True)
+  #     x_fwd = self.transformer.ln_f(x_fwd)
+  #     logits_fwd = self.lm_head(x_fwd)
+  #     if y is not None:
+  #       # Forward loss: standard next-token prediction
+
+  #       loss = F.cross_entropy(
+  #           logits_fwd.view(-1, V), 
+  #           y.view(-1),
+  #           ignore_index=self.config.pad_token_id)
+  #   else:
+  #     min_pos = int(N * self.config.range_low) + 1
+  #     sample_pos = torch.randint(min_pos, N + 1, (1,), device=x.device)[0]
+  #     start = (sample_pos * self.config.range_low).long()
+  #     end = (sample_pos * self.config.range_high).long()
+  #     end = torch.where(end <= start, start + 1, end)
+
+  #     positions = torch.arange(N, device=x.device)
+  #     mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
+  #     causal_mask = positions >= sample_pos
+
+  #     targets = y[:, mask] if y is not None else None
+
+  #     x_bwd = x.clone()
+  #     x_bwd = x_bwd.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
+  #     x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
+
+  #     x_bwd = self.transformer.wte(x_bwd) + pos_emb
+  #     x_bwd = self.transformer.drop(x_bwd)
+
+  #     for layer_block in self.transformer.h:
+  #       x_bwd = layer_block(x_bwd, mask=False)
+  #     x_bwd = self.transformer.ln_f(x_bwd)
+  #     logits_bwd = self.lm_head(x_bwd[:,mask])
+      
+  #     if y is not None:
+  #       loss = F.cross_entropy(
+  #           # logits_bwd[:, start:end].reshape(-1, V),
+  #           logits_bwd.reshape(-1,V),
+  #           targets.reshape(-1),
+  #           ignore_index=self.config.pad_token_id,
+  #       )
+
+  #   return loss
+
+
+
+
+
+  def forward(self, x, y=None):
+    #Define some useful constants for the forward pass
     B, N = x.size()
     V = self.config.vocab_size
+
+    # Loss is defined on both tasks independently
+    x_fwd = x
+    # x_bwd = x.clone()
+    y_fwd = y
+
+    #Get the learned positional embeddings
     pos = torch.arange(0, N, dtype=torch.long, device=x.device)
     pos_emb = self.transformer.wpe(pos)
 
-    if(use_fwd):
-      x_fwd = self.transformer.wte(x) + pos_emb
-      x_fwd = self.transformer.drop(x_fwd)
-      for layer_block in self.transformer.h:
-        x_fwd = layer_block(x_fwd, mask=True)
-      x_fwd = self.transformer.ln_f(x_fwd)
-      logits_fwd = self.lm_head(x_fwd)
-      if y is not None:
+    #Randomly sample a position to be the simulated endpoint for group regeneration
+    sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,), device=x.device)[0]
+
+    start = (sample_pos * self.config.range_low).long()
+    end = (sample_pos * self.config.range_high).long()
+    end = torch.where(end <= start, start + 1, end)
+
+    positions = torch.arange(N, device=x.device)
+    mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
+    causal_mask = positions >= sample_pos
+    y_bwd = y[:, mask] if y is not None else None
+    x_bwd = x.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
+    x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
+
+    #Combine both sequences so they can be passed through together
+    x_fwd = self.transformer.wte(x_fwd) + pos_emb
+    x_bwd = self.transformer.wte(x_bwd) + pos_emb
+    x_fwd = self.transformer.drop(x_fwd)
+    x_bwd = self.transformer.drop(x_bwd)
+
+
+
+    for layer_block in self.transformer.h:
+      x_fwd = layer_block(x_fwd, mask=True)
+      x_bwd = layer_block(x_bwd, mask=False)
+
+    x_fwd = self.transformer.ln_f(x_fwd)
+    x_bwd = self.transformer.ln_f(x_bwd)
+
+
+    logits_fwd = self.lm_head(x_fwd)
+    logits_bwd = self.lm_head(x_bwd[:,mask])
+
+
+    if y is not None:
         # Forward loss: standard next-token prediction
 
-        loss = F.cross_entropy(
+        loss_fwd = F.cross_entropy(
             logits_fwd.view(-1, V), 
-            y.view(-1),
+            y_fwd.view(-1),
             ignore_index=self.config.pad_token_id)
-    else:
-      sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,), device=x.device)[0]
-      start = (sample_pos * self.config.range_low).long()
-      end = (sample_pos * self.config.range_high).long()
-      end = torch.where(end <= start, start + 1, end)
 
-      positions = torch.arange(N, device=x.device)
-      mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
-      causal_mask = positions >= sample_pos
-
-      targets = y[:, mask] if y is not None else None
-
-      x_bwd = x.clone()
-      x_bwd = x_bwd.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
-      x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
-
-      x_bwd = self.transformer.wte(x_bwd) + pos_emb
-      x_bwd = self.transformer.drop(x_bwd)
-
-      for layer_block in self.transformer.h:
-        x_bwd = layer_block(x_bwd, mask=False)
-      x_bwd = self.transformer.ln_f(x_bwd)
-      logits_bwd = self.lm_head(x_bwd)
-      
-      if y is not None:
-        loss = F.cross_entropy(
-            # logits_bwd[:, start:end].reshape(-1, V),
-            logits_bwd[:, mask].reshape(-1,V),
-            targets.reshape(-1),
+        loss_bwd = F.cross_entropy(
+            logits_bwd.reshape(-1,V),
+            y_bwd.reshape(-1),
             ignore_index=self.config.pad_token_id,
         )
 
-    return loss
-
-
-
-
-
-
-    # #Split the batch in half so that  each token is only seen once but both losses are trained
-    # half = B // 2
-    # # Split batch — each objective gets its own sequences
-    # x_fwd, x_bwd = x[:half], x[half:]
-    # y_fwd = y[:half] if y is not None else None
-    
-
-    
-
-    # #Randomly sample a position to be the simulated endpoint for group regeneration
-    # sample_pos = torch.randint(int(1/self.config.range_low), N + 1, (1,), device=x.device)[0]
-
-    # start = (sample_pos * self.config.range_low).long()
-    # end = (sample_pos * self.config.range_high).long()
-    # end = torch.where(end <= start, start + 1, end)
-
-    # positions = torch.arange(N, device=x.device)
-    # mask = (positions >= start) & (positions < end)  # fully tensor ops, no graph break
-    # causal_mask = positions >= sample_pos
-
-
-    # # targets = y[half:, start:end] if y is not None else None
-    # targets = y[half:, mask] if y is not None else None
-
-    # x_bwd = x_bwd.clone()
-    # x_bwd = x_bwd.masked_fill(mask.unsqueeze(0), self.config.pad_token_id)
-    # x_bwd = x_bwd.masked_fill(causal_mask.unsqueeze(0), self.config.pad_token_id)
-
-    # # x_bwd[:, start:end] = self.config.pad_token_id
-    # # x_bwd[:, sample_pos:] = self.config.pad_token_id
-    
-    # #Combine both sequences so they can be passed through together
-    # #x = self.transformer.wte(torch.cat([x_fwd, x_bwd], dim=0)) + pos_emb
-    # x_fwd = self.transformer.wte(x_fwd) + pos_emb
-    # x_bwd = self.transformer.wte(x_bwd) + pos_emb
-    # x_fwd = self.transformer.drop(x_fwd)
-    # x_bwd = self.transformer.drop(x_bwd)
-
-
-
-    # for layer_block in self.transformer.h:
-    #   x_fwd = layer_block(x_fwd, mask=True)
-    #   x_bwd = layer_block(x_bwd, mask=False)
-
-    # x_fwd = self.transformer.ln_f(x_fwd)
-    # x_bwd = self.transformer.ln_f(x_bwd)
-
-    # # x = self.transformer.drop(x)
-
-
-    # logits_fwd = self.lm_head(x_fwd)
-    # logits_bwd = self.lm_head(x_bwd)
-    # # logits_fwd, logits_bwd = logits.chunk(2, dim=0)
-
-
-    # if y is not None:
-    #     # Forward loss: standard next-token prediction
-
-    #     loss_fwd = F.cross_entropy(
-    #         logits_fwd.view(-1, V), 
-    #         y_fwd.view(-1),
-    #         ignore_index=self.config.pad_token_id)
-
-    #     loss_bwd = F.cross_entropy(
-    #         # logits_bwd[:, start:end].reshape(-1, V),
-    #         logits_bwd[:, mask].reshape(-1,V),
-    #         targets.reshape(-1),
-    #         ignore_index=self.config.pad_token_id,
-    #     )
-
-    # return loss_fwd, loss_bwd
+    return loss_fwd, loss_bwd
   
 
 
