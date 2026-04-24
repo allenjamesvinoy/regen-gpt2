@@ -16,7 +16,7 @@ class GPTConfig:
   pad_token_id : int = 50256
 
 
-class GPT2_Lag(nn.Module):
+class GPT2(nn.Module):
   #create a ModuleDict with wte, wpe, hidden layers, weight and bias
   def __init__(self, config: GPTConfig, device):
     super().__init__()
