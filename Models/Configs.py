@@ -55,3 +55,13 @@ class BERTConfig:
   range_low : float = .5
   range_high : float = .75
 
+@dataclass
+class BaselineConfig:
+  num_heads: int = 12
+  num_layers: int = 12
+  vocab_size: int = 50257
+  embedding_dim: int = 768
+  block_size: int = 512
+  dropout : float = .1
+  weight_decay : float = .1
+  pad_token_id : int = 50256

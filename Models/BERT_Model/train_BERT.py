@@ -4,7 +4,7 @@ from torch.nn.utils import clip_grad_norm_
 
 
 @torch.no_grad()
-def estimate_loss(model, loader, device, eval_iters=10, lam=.5):
+def estimate_loss(model, loader, device, eval_iters=10):
     model.eval()
 
     losses_fwd = []
