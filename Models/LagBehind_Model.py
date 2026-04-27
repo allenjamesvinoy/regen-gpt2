@@ -33,17 +33,15 @@ class GPT2_Lag(nn.Module):
         pos     = torch.arange(0, SL, dtype=torch.long, device=self.device)
         pos_emb = self.transformer.wpe(pos)
 
-        # split batch before entering transformer
-        x_fwd = self.transformer.wte(x[:half]) + pos_emb  # causal half
-        x_lag = self.transformer.wte(x[half:]) + pos_emb  # punch-out half
+        x_fwd = self.transformer.wte(x[:half]) + pos_emb
+        x_lag = self.transformer.wte(x[half:]) + pos_emb
 
         x_fwd = self.transformer.drop(x_fwd)
         x_lag = self.transformer.drop(x_lag)
 
-        # separate passes through shared layers with different masks
         for layer_block in self.transformer.h:
-            x_fwd = layer_block(x_fwd, future=False)  # causal mask
-            x_lag = layer_block(x_lag, future=True)   # punch-out mask
+            x_fwd = layer_block(x_fwd, future=False)
+            x_lag = layer_block(x_lag, future=True)
 
         x_fwd = self.transformer.ln_f(x_fwd)
         x_lag = self.transformer.ln_f(x_lag)
@@ -53,16 +51,13 @@ class GPT2_Lag(nn.Module):
 
         loss = None
         if y is not None:
-            # forward loss: predict next token on causal half
             loss_fwd = F.cross_entropy(
                 logits_fwd.view(-1, V),
                 y[:half].view(-1)
             )
 
-            # lag loss: position i predicts token at i - skip_dist
-            # targets come from x (input), not y
-            bwd_targets = x[half:, :-skip_dist]           # tokens 0..SL-2
-            bwd_logits  = logits_lag[:, skip_dist:]        # logits at positions 1..SL-1
+            bwd_targets = x[half:, :-skip_dist]
+            bwd_logits  = logits_lag[:, skip_dist:]
             loss_lag = F.cross_entropy(
                 bwd_logits.reshape(-1, V),
                 bwd_targets.reshape(-1)
@@ -83,7 +78,7 @@ class LayerBlock(nn.Module):
 
   def forward(self, x, future):
     x = x + self.attn(self.ln_1(x), future)
-    x = x + self.mlp(self.ln_2(x)) #why do we layer-norm before passing mlp?
+    x = x + self.mlp(self.ln_2(x))
     return x
 
 
@@ -109,8 +104,8 @@ class AttentionMultiHeadFused(nn.Module):
     self.device = device
     self.w_qkv = nn.Linear(config.embedding_dim, 3*config.embedding_dim)
     self.output = nn.Linear(config.embedding_dim, config.embedding_dim)
-    self.attn_drop = config.dropout  # passed to scaled_dot_product_attention
-    self.resid_drop = nn.Dropout(config.dropout)  # add this
+    self.attn_drop = config.dropout
+    self.resid_drop = nn.Dropout(config.dropout)
 
   def forward(self, x, future):
     B,SL,ED = x.size()
@@ -132,7 +127,6 @@ class AttentionMultiHeadFused(nn.Module):
     if future:
       skip_dist = self.config.lag_behind
       mask = torch.tril(torch.ones(SL, SL, device=x.device)).bool()
-      # Punch out t_{i - skip_dist} for each row i >= skip_dist
       rows = torch.arange(skip_dist, SL, device=x.device)
       mask[rows, rows - skip_dist] = False
       mask = torch.where(mask, 0.0, float('-inf'))

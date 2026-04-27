@@ -190,16 +190,15 @@ class CombinedBinDataLoader:
         self._shuffle()
         self.idx = 0
 
-        # Prefetch state
         self._next = None
         self._thread = None
-        self._prefetch()  # kick off first prefetch immediately
+        self._prefetch()
 
         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
 
     @staticmethod
     def create_loaders(filename, B, SL, train_config, seed=42):
-        data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))  # full copy into RAM
+        data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))
         #data = np.memmap(filename, dtype=np.uint16, mode='r')
         chunk_size = B * SL + 1
 
@@ -240,7 +239,7 @@ class CombinedBinDataLoader:
         self._thread.start()
 
     def get_data(self):
-        self._thread.join()          # wait for prefetch to finish
+        self._thread.join()
         x, y = self._next
-        self._prefetch()             # immediately kick off next load
+        self._prefetch()
         return x, y, None
