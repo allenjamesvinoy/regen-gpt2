@@ -196,7 +196,14 @@ class CombinedBinDataLoader:
         self._prefetch()  # kick off first prefetch immediately
 
         print(f"Initialized loader with {len(self.split_starts):,} chunks of size {B * SL + 1}.")
+    
+    def __iter__(self):
+        return self
 
+    def __next__(self):
+        x, y, _ = self.get_data()
+        return x,y
+    
     @staticmethod
     def create_loaders(filename, B, SL, train_config, seed=42):
         data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))  # full copy into RAM
