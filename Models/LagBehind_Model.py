@@ -3,29 +3,7 @@ import torch.nn as nn
 from torch import dropout, embedding
 from dataclasses import dataclass
 import torch.nn.functional as F
-
-@dataclass
-class LagBehindGPTConfig:
-    num_heads:     int = 6
-    num_layers:    int = 6
-    vocab_size:    int = 50257
-    embedding_dim: int = 768
-    block_size:    int = 1024
-    lag_behind:    int = 1
-    dropout:       float = .1
-    pad_token_id:  int = 50256
-
-
-@dataclass
-class GPTConfig:
-    num_heads:     int   = 6
-    num_layers:    int   = 6
-    vocab_size:    int   = 50257
-    embedding_dim: int   = 768
-    block_size:    int   = 1024
-    lag_behind:    int   = 1
-    dropout:       float = 0.1
-    pad_token_id:  int   = 50256
+from .Configs import GPTConfig
 
 
 class GPT2_Lag(nn.Module):
@@ -95,7 +73,7 @@ class GPT2_Lag(nn.Module):
         return logits_fwd, logits_lag, loss
 
 class LayerBlock(nn.Module):
-  def __init__(self, config: LagBehindGPTConfig, device):
+  def __init__(self, config: GPTConfig, device):
     super().__init__()
     self.ln_1 = nn.LayerNorm(config.embedding_dim)
     self.attn = AttentionMultiHeadFused(config, device)
@@ -110,7 +88,7 @@ class LayerBlock(nn.Module):
 
 
 class MLP(nn.Module):
-  def __init__(self, config: LagBehindGPTConfig):
+  def __init__(self, config: GPTConfig):
     super().__init__()
     self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim)
     self.gelu = nn.GELU(approximate='tanh')
@@ -125,7 +103,7 @@ class MLP(nn.Module):
     return x
 
 class AttentionMultiHeadFused(nn.Module):
-  def __init__(self, config: LagBehindGPTConfig, device):
+  def __init__(self, config: GPTConfig, device):
     super().__init__()
     self.config = config
     self.device = device

@@ -213,6 +213,13 @@ class CombinedBinDataLoader:
         train_loader = CombinedBinDataLoader(data, shuffled[:n], B, SL, train_config, seed=seed)
         val_loader = CombinedBinDataLoader(data, shuffled[n:], B, SL, train_config, seed=seed + 1)
         return train_loader, val_loader
+    
+    @staticmethod
+    def create_test_loader(filename, B, SL, config, seed=42):
+        data = np.array(np.memmap(filename, dtype=np.uint16, mode='r'))
+        chunk_size = B * SL + 1
+        all_starts = np.arange(0, len(data) - chunk_size, B * SL, dtype=np.int64)
+        return CombinedBinDataLoader(data, all_starts, B, SL, config, seed=seed)
         
     def _shuffle(self):
         self.shuffled_starts = self.rng.permutation(self.split_starts)

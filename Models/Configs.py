@@ -3,6 +3,16 @@ import math
 import torch
 
 @dataclass
+class GPTConfig:
+    num_heads:     int   = 6
+    num_layers:    int   = 6
+    vocab_size:    int   = 50257
+    embedding_dim: int   = 768
+    block_size:    int   = 1024
+    dropout:       float = 0.1
+    pad_token_id:  int   = 50256
+
+@dataclass
 class TrainConfig:
   batch_per_iter : int = 32
   grad_acc_factor : int = 16
@@ -56,7 +66,7 @@ class BERTConfig:
   range_high : float = .75
 
 @dataclass
-class BaselineConfig:
+class BaselineConfig(GPTConfig):
   num_heads: int = 12
   num_layers: int = 12
   vocab_size: int = 50257
@@ -65,3 +75,15 @@ class BaselineConfig:
   dropout : float = .1
   weight_decay : float = .1
   pad_token_id : int = 50256
+
+@dataclass
+class LagBehindConfig(GPTConfig):
+  num_heads: int = 12
+  num_layers: int = 12
+  vocab_size: int = 50257
+  embedding_dim: int = 768
+  block_size: int = 512
+  dropout : float = .1
+  weight_decay : float = .1
+  pad_token_id : int = 50256
+  lag_behind : int = 1
