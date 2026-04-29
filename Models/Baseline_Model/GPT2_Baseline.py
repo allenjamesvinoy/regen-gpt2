@@ -10,21 +10,20 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from Configs import BaselineConfig
 
 class GPT2_Baseline(nn.Module):
-  #create a ModuleDict with wte, wpe, hidden layers, weight and bias
   def __init__(self, config: BaselineConfig, device):
     super().__init__()
     self.config = config
     self.device = device
     self.transformer = nn.ModuleDict(
         dict(
-            wte = nn.Embedding(config.vocab_size, config.embedding_dim), # how do we determine the dimensions of this?
+            wte = nn.Embedding(config.vocab_size, config.embedding_dim),
             wpe = nn.Embedding(config.block_size, config.embedding_dim),
             h = nn.ModuleList([LayerBlock(config) for _ in range(config.num_layers)]),
             ln_f = nn.LayerNorm(config.embedding_dim),
             drop = nn.Dropout(config.dropout)
         )
     )
-    self.lm_head = nn.Linear(config.embedding_dim, config.vocab_size, bias=False) #why is bias set as False?
+    self.lm_head = nn.Linear(config.embedding_dim, config.vocab_size, bias=False)
     self.transformer.wte.weight = self.lm_head.weight  # weight tying
     self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
@@ -39,7 +38,6 @@ class GPT2_Baseline(nn.Module):
     pos = torch.arange(0, N, dtype=torch.long, device=x.device)
     pos_emb = self.transformer.wpe(pos)
 
-    #Combine both sequences so they can be passed through together
     x = self.transformer.wte(x) + pos_emb
     x = self.transformer.drop(x)
 
@@ -51,7 +49,6 @@ class GPT2_Baseline(nn.Module):
     logits = self.lm_head(x)
 
 
-    # Forward loss: standard next-token prediction
     loss = F.cross_entropy(
         logits.view(-1, V), 
         y.view(-1),
@@ -61,6 +58,7 @@ class GPT2_Baseline(nn.Module):
 
   @torch.no_grad()
   def infer(self, prompt, max_new_tokens: int, temperature: float = 1.0, top_k: int = 50):
+    #Note that the infer function itself handles the KV cache management
     self.eval()
     tokens = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
 
@@ -105,105 +103,71 @@ class GPT2_Baseline(nn.Module):
 
 
 class LayerBlock(nn.Module):
-    def __init__(self, config: BaselineConfig):
-        super().__init__()
-        self.ln_1 = nn.LayerNorm(config.embedding_dim)
-        self.attn = AttentionMultiHeadFused(config)
-        self.ln_2 = nn.LayerNorm(config.embedding_dim)
-        self.mlp = MLP(config)
+  def __init__(self, config: BaselineConfig):
+      super().__init__()
+      self.ln_1 = nn.LayerNorm(config.embedding_dim)
+      self.attn = AttentionMultiHeadFused(config)
+      self.ln_2 = nn.LayerNorm(config.embedding_dim)
+      self.mlp = MLP(config)
     
 
-    def forward(self, x, kv_cache = None):
-        attn_out, new_cache = self.attn(self.ln_1(x), kv_cache)
-        x = x + attn_out
-        x = x + self.mlp(self.ln_2(x)) #why do we layer-norm before passing mlp?
-        return x, new_cache
+  def forward(self, x, kv_cache = None):
+    attn_out, new_cache = self.attn(self.ln_1(x), kv_cache)
+    x = x + attn_out
+    x = x + self.mlp(self.ln_2(x))
+    return x, new_cache
 
 
 class MLP(nn.Module):
-    def __init__(self, config: BaselineConfig):
-        super().__init__()
-        self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim)
-        self.gelu = nn.GELU(approximate='tanh')
-        self.c_proj = nn.Linear(4*config.embedding_dim, config.embedding_dim)
-        self.drop   = nn.Dropout(config.dropout)
+  def __init__(self, config: BaselineConfig):
+    super().__init__()
+    self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim)
+    self.gelu = nn.GELU(approximate='tanh')
+    self.c_proj = nn.Linear(4*config.embedding_dim, config.embedding_dim)
+    self.drop   = nn.Dropout(config.dropout)
 
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.drop(x)
-        return x
+  def forward(self, x):
+    x = self.c_fc(x)
+    x = self.gelu(x)
+    x = self.c_proj(x)
+    x = self.drop(x)
+    return x
 
 
 
 
 class AttentionMultiHeadFused(nn.Module):
-    def __init__(self, config: BaselineConfig):
-        super().__init__()
-        self.config = config
-        self.w_qkv = nn.Linear(config.embedding_dim, 3 * config.embedding_dim)
-        self.output = nn.Linear(config.embedding_dim, config.embedding_dim)
-        self.attn_drop = config.dropout
-        self.resid_drop = nn.Dropout(config.dropout)
+  def __init__(self, config: BaselineConfig):
+    super().__init__()
+    self.config = config
+    self.w_qkv = nn.Linear(config.embedding_dim, 3 * config.embedding_dim)
+    self.output = nn.Linear(config.embedding_dim, config.embedding_dim)
+    self.attn_drop = config.dropout
+    self.resid_drop = nn.Dropout(config.dropout)
 
 
-    def forward(self, x, kv_cache=None):
-        B, N, d = x.size()
-        h = self.config.num_heads
-        d_eff = d // h
+  def forward(self, x, kv_cache=None):
+    B, N, d = x.size()
+    h = self.config.num_heads
+    d_eff = d // h
 
-        q, k, v = self.w_qkv(x).split(d, dim=2)
-        q = q.view(B, N, h, d_eff).transpose(1, 2)
-        k = k.view(B, N, h, d_eff).transpose(1, 2)
-        v = v.view(B, N, h, d_eff).transpose(1, 2)
+    q, k, v = self.w_qkv(x).split(d, dim=2)
+    q = q.view(B, N, h, d_eff).transpose(1, 2)
+    k = k.view(B, N, h, d_eff).transpose(1, 2)
+    v = v.view(B, N, h, d_eff).transpose(1, 2)
 
-        if not self.training and kv_cache is not None:
-            k_cache, v_cache = kv_cache
-            k = torch.cat([k_cache, k], dim=2)
-            v = torch.cat([v_cache, v], dim=2)
+    if not self.training and kv_cache is not None:
+      k_cache, v_cache = kv_cache
+      k = torch.cat([k_cache, k], dim=2)
+      v = torch.cat([v_cache, v], dim=2)
 
-        new_cache = (k, v) if not self.training else None
+    new_cache = (k, v) if not self.training else None
 
-        dropout_p = self.attn_drop if self.training else 0.0
-        is_causal = kv_cache is None  # full causal mask during prefill and training
-        attn_out  = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal, dropout_p=dropout_p)
+    dropout_p = self.attn_drop if self.training else 0.0
+    is_causal = kv_cache is None  # full causal mask during prefill and training
+    attn_out  = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal, dropout_p=dropout_p)
 
-        attn_out = attn_out.transpose(1, 2).contiguous().view(B, N, d)
-        out = self.output(attn_out)
-        out = self.resid_drop(out)
-        return out, new_cache
-
-
-
-
-
-
-
-# class AttentionMultiHeadFused(nn.Module):
-#   def __init__(self, config: GPT2Config, device):
-#     super().__init__()
-#     self.config = config
-#     self.device = device
-#     self.w_qkv = nn.Linear(config.embedding_dim, 3*config.embedding_dim)
-#     self.output = nn.Linear(config.embedding_dim, config.embedding_dim)
-#     self.attn_drop = config.dropout  # passed to scaled_dot_product_attention
-#     self.resid_drop = nn.Dropout(config.dropout)  # add this
-
-#   def forward(self, x):
-#     B,N,ED = x.size()
-#     qkv = self.w_qkv(x)
-#     q, k, v = qkv.split(self.config.embedding_dim, dim=2)
-#     q = q.view(B, N, self.config.num_heads, ED // self.config.num_heads).transpose(1,2)
-#     k = k.view(B, N, self.config.num_heads, ED // self.config.num_heads).transpose(1,2)
-#     v = v.view(B, N, self.config.num_heads, ED // self.config.num_heads).transpose(1,2)
-
-#     dropout_p=self.attn_drop if self.training else 0.0
-
-#     attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
-
-
-#     attn_out = attn_out.transpose(1,2).contiguous().view(B, N, ED)
-#     y = self.output(attn_out)
-#     y = self.resid_drop(y)
-#     return y
+    attn_out = attn_out.transpose(1, 2).contiguous().view(B, N, d)
+    out = self.output(attn_out)
+    out = self.resid_drop(out)
+    return out, new_cache
