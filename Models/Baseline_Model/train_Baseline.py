@@ -1,10 +1,8 @@
 import torch
 import time
-from torch.nn.utils import clip_grad_norm_
-
 
 @torch.no_grad()
-def estimate_loss(model, loader, device, eval_iters=10, lam=.5):
+def estimate_loss(model, loader, device, eval_iters=10):
     model.eval()
 
     losses = []
@@ -43,8 +41,7 @@ def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_lo
         if step % 100 == 0 and step > 0:
             loss, ppl = estimate_loss(model, val_loader, device, num_steps_val)
             print(f"Step {step:4d} | Val Loss: {loss:.4f} | PPL: {ppl:.2f}")
-            if device == 'mps':
-                torch.mps.empty_cache()
+
 
 
         avg_loss = 0
