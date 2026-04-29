@@ -9,10 +9,11 @@ def estimate_loss(model, loader, device, eval_iters=10):
 
     losses_fwd = []
     losses_bwd = []
-
-
-    for i in range(eval_iters):
-      x, y, _ = loader.get_data()
+    iter_count = 0
+    for x, y in loader:
+      if(iter_count >= eval_iters):
+        break
+      iter_count += 1
       x, y = x.to(device), y.to(device)
       loss_fwd, loss_bwd = model(x, y)
       losses_fwd.append(loss_fwd.item())
@@ -59,8 +60,11 @@ def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_lo
     for step in range(num_steps_train):
       avg_loss = 0
       optimizer.zero_grad(set_to_none=True)
-      for i in range(grad_acc_factor):
-        x, y, _ = train_loader.get_data()
+      grad_acc_count = 0
+      for x,y in train_loader:
+        if(grad_acc_count >= grad_acc_factor):
+          break
+        grad_acc_count += 1
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
 

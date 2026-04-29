@@ -6,9 +6,12 @@ def estimate_loss(model, loader, device, eval_iters=10):
   model.eval()
 
   losses = []
-
-  for _ in range(eval_iters):
-    x, y, _ = loader.get_data()
+  iters = 0
+  for x,y in loader:
+    #The dataloader shuffles the data rather than ending
+    if(iters >= eval_iters):
+      break
+    iters += 1
     x, y = x.to(device), y.to(device)
     with torch.autocast(device_type=device.type, dtype=torch.float16):
         _, loss = model(x, y)
@@ -44,8 +47,11 @@ def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_lo
 
     avg_loss = 0
     optimizer.zero_grad(set_to_none=True)
-    for _ in range(grad_acc_factor):
-      x, y, _ = train_loader.get_data()
+    grad_acc_count = 0
+    for x,y in train_loader:
+      if(grad_acc_count >= grad_acc_factor):
+        break
+      # x, y = train_loader.get_data()
       x = x.to(device, non_blocking=True)
       y = y.to(device, non_blocking=True)
 
