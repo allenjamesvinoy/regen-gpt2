@@ -102,6 +102,44 @@ class GPT2_Baseline(nn.Module):
       v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
       logits[logits < v[:, [-1]]] = float('-inf')
     return torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1)
+  
+  @torch.no_grad()
+  def prefill(self, prompt_tokens):
+      self.eval()
+      tokens = torch.tensor(prompt_tokens, dtype=torch.long, 
+                            device=self.device).unsqueeze(0)
+      N = tokens.size(1)
+      pos = torch.arange(0, N, dtype=torch.long, device=self.device)
+      x = self.transformer.wte(tokens) + self.transformer.wpe(pos)
+      x = self.transformer.drop(x)
+
+      kv_caches = []
+      for layer_block in self.transformer.h:
+          x, cache = layer_block(x, kv_cache=None)
+          kv_caches.append(cache)
+
+      x = self.transformer.ln_f(x)
+      logits = self.lm_head(x)
+      return logits, kv_caches
+
+  @torch.no_grad()
+  def decode_one_token(self, token, pos, kv_caches):
+      self.eval()
+      x = torch.tensor([[token]], dtype=torch.long, device=self.device)
+      pos_emb = self.transformer.wpe(
+          torch.tensor([pos], dtype=torch.long, device=self.device)
+      )
+      x = self.transformer.wte(x) + pos_emb
+      x = self.transformer.drop(x)
+
+      new_caches = []
+      for layer_block, kv_cache in zip(self.transformer.h, kv_caches):
+          x, cache = layer_block(x, kv_cache=kv_cache)
+          new_caches.append(cache)
+
+      x = self.transformer.ln_f(x)
+      logits = self.lm_head(x)
+      return logits, new_caches
 
 
 class LayerBlock(nn.Module):

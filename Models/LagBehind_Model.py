@@ -22,6 +22,7 @@ class GPT2_Lag(nn.Module):
         self.lm_head     = nn.Linear(config.embedding_dim, config.vocab_size, bias=False)
         self.lm_head_lag = nn.Linear(config.embedding_dim, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight  # weight tying
+        self.lm_head_lag.weight = self.lm_head.weight
 
     def forward(self, x, y=None, lam=0.5):
         B, SL = x.size()
@@ -40,8 +41,8 @@ class GPT2_Lag(nn.Module):
         x_lag = self.transformer.drop(x_lag)
 
         for layer_block in self.transformer.h:
-            x_fwd = layer_block(x_fwd, future=False)
-            x_lag = layer_block(x_lag, future=True)
+            x_fwd, _ = layer_block(x_fwd, future=False)
+            x_lag, _ = layer_block(x_lag, future=True)
 
         x_fwd = self.transformer.ln_f(x_fwd)
         x_lag = self.transformer.ln_f(x_lag)
@@ -67,6 +68,63 @@ class GPT2_Lag(nn.Module):
 
         return logits_fwd, logits_lag, loss
 
+    @torch.no_grad()
+    def prefill(self, prompt_tokens):
+        self.eval()
+        SL = len(prompt_tokens)
+        x = torch.tensor(prompt_tokens, dtype=torch.long,
+                          device=self.device).unsqueeze(0)
+
+        pos = torch.arange(0, SL, dtype=torch.long, device=self.device)
+        pos_emb = self.transformer.wpe(pos)
+        h = self.transformer.wte(x) + pos_emb
+        h = self.transformer.drop(h)
+
+        kv_caches = []
+        for layer_block in self.transformer.h:
+            h, cache = layer_block(h, future=False, kv_cache=None)
+            kv_caches.append(cache)
+
+        h = self.transformer.ln_f(h)
+        logits = self.lm_head(h)
+        return logits, kv_caches
+
+    @torch.no_grad()
+    def decode_one_token(self, token, pos, kv_caches):
+        self.eval()
+        x = torch.tensor([[token]], dtype=torch.long, device=self.device)
+        pos_emb = self.transformer.wpe(
+            torch.tensor([pos], dtype=torch.long, device=self.device)
+        )
+        h = self.transformer.wte(x) + pos_emb
+        h = self.transformer.drop(h)
+
+        new_caches = []
+        for layer_block, kv_cache in zip(self.transformer.h, kv_caches):
+            h, cache = layer_block(h, future=False, kv_cache=kv_cache)
+            new_caches.append(cache)
+
+        h = self.transformer.ln_f(h)
+        logits = self.lm_head(h)
+        return logits, new_caches
+
+    @torch.no_grad()
+    def lag_correct(self, generated_tokens):
+        self.eval()
+        seq = torch.tensor(generated_tokens, dtype=torch.long,
+                            device=self.device).unsqueeze(0)
+
+        pos = torch.arange(0, seq.size(1), dtype=torch.long, device=self.device)
+        pos_emb = self.transformer.wpe(pos)
+        x_lag = self.transformer.wte(seq) + pos_emb
+
+        for layer_block in self.transformer.h:
+            x_lag, _ = layer_block(x_lag, future=True)
+
+        x_lag   = self.transformer.ln_f(x_lag)
+        logits_lag = self.lm_head_lag(x_lag)
+        return logits_lag
+    
 class LayerBlock(nn.Module):
   def __init__(self, config: GPTConfig, device):
     super().__init__()
@@ -76,10 +134,11 @@ class LayerBlock(nn.Module):
     self.mlp = MLP(config)
     
 
-  def forward(self, x, future):
-    x = x + self.attn(self.ln_1(x), future)
+  def forward(self, x, future, kv_cache=None):
+    attn_out, new_cache = self.attn(self.ln_1(x), future, kv_cache)
+    x = x + attn_out
     x = x + self.mlp(self.ln_2(x))
-    return x
+    return x, new_cache
 
 
 class MLP(nn.Module):
@@ -107,7 +166,7 @@ class AttentionMultiHeadFused(nn.Module):
     self.attn_drop = config.dropout
     self.resid_drop = nn.Dropout(config.dropout)
 
-  def forward(self, x, future):
+  def forward(self, x, future, kv_cache=None):
     B,SL,ED = x.size()
     qkv = self.w_qkv(x)
     q, k, v = qkv.split(self.config.embedding_dim, dim=2)
@@ -131,11 +190,21 @@ class AttentionMultiHeadFused(nn.Module):
       mask[rows, rows - skip_dist] = False
       mask = torch.where(mask, 0.0, float('-inf'))
       attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=dropout_p)
+
+      new_cache = None
     else:
-      attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
+      if kv_cache is not None:
+        k_cache, v_cache = kv_cache
+        k = torch.cat([k_cache, k], dim=2)
+        v = torch.cat([v_cache, v], dim=2)
+        attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=False, dropout_p=dropout_p)
+      else:
+        attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
+
+      new_cache = (k, v) if not self.training else None
 
 
     attn_out = attn_out.transpose(1,2).contiguous().view(B, SL, ED)
     y = self.output(attn_out)
     y = self.resid_drop(y)
-    return y
+    return y, new_cache
