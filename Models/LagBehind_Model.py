@@ -3,11 +3,11 @@ import torch.nn as nn
 from torch import dropout, embedding
 from dataclasses import dataclass
 import torch.nn.functional as F
-from .Configs import GPTConfig
+from .Configs import LagBehindConfig
 
 
 class GPT2_Lag(nn.Module):
-    def __init__(self, config: GPTConfig, device):
+    def __init__(self, config: LagBehindConfig, device):
         super().__init__()
         self.config = config
         self.device = device
@@ -126,7 +126,7 @@ class GPT2_Lag(nn.Module):
         return logits_lag
     
 class LayerBlock(nn.Module):
-  def __init__(self, config: GPTConfig, device):
+  def __init__(self, config: LagBehindConfig, device):
     super().__init__()
     self.ln_1 = nn.LayerNorm(config.embedding_dim)
     self.attn = AttentionMultiHeadFused(config, device)
@@ -142,7 +142,7 @@ class LayerBlock(nn.Module):
 
 
 class MLP(nn.Module):
-  def __init__(self, config: GPTConfig):
+  def __init__(self, config: LagBehindConfig):
     super().__init__()
     self.c_fc = nn.Linear(config.embedding_dim, 4*config.embedding_dim)
     self.gelu = nn.GELU(approximate='tanh')
@@ -157,7 +157,7 @@ class MLP(nn.Module):
     return x
 
 class AttentionMultiHeadFused(nn.Module):
-  def __init__(self, config: GPTConfig, device):
+  def __init__(self, config: LagBehindConfig, device):
     super().__init__()
     self.config = config
     self.device = device
