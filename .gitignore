@@ -11,3 +11,9 @@ __pycache__/
 
 __pycache__/
 Models/model_weights.pth
+ckpt_baseline_step_1000.pt
+ckpt_baseline_step_2000.pt
+ckpt_baseline_step_3000.pt
+ckpt_baseline_step_3623.pt
+ckpt_BERT_6_layers_combined_loss.pt
+ckpt_BERT_6_layers.pt

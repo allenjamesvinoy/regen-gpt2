@@ -2,15 +2,15 @@ from dataclasses import dataclass
 import math
 import torch
 
-@dataclass
-class GPTConfig:
-    num_heads:     int   = 6
-    num_layers:    int   = 6
-    vocab_size:    int   = 50257
-    embedding_dim: int   = 768
-    block_size:    int   = 1024
-    dropout:       float = 0.1
-    pad_token_id:  int   = 50256
+# @dataclass
+# class GPTConfig:
+#     num_heads:     int   = 6
+#     num_layers:    int   = 6
+#     vocab_size:    int   = 50257
+#     embedding_dim: int   = 768
+#     block_size:    int   = 1024
+#     dropout:       float = 0.1
+#     pad_token_id:  int   = 50256
 
 @dataclass
 class TrainConfig:
@@ -66,7 +66,7 @@ class BERTConfig:
   range_high : float = .75
 
 @dataclass
-class BaselineConfig(GPTConfig):
+class BaselineConfig:
   num_heads: int = 12
   num_layers: int = 12
   vocab_size: int = 50257
@@ -77,7 +77,7 @@ class BaselineConfig(GPTConfig):
   pad_token_id : int = 50256
 
 @dataclass
-class LagBehindConfig(GPTConfig):
+class LagBehindConfig:
   num_heads: int = 12
   num_layers: int = 12
   vocab_size: int = 50257
