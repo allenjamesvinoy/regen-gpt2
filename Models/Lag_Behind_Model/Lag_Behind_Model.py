@@ -3,8 +3,10 @@ import torch.nn as nn
 from torch import dropout, embedding
 from dataclasses import dataclass
 import torch.nn.functional as F
-from .Configs import LagBehindConfig
-
+from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from Configs import LagBehindConfig
 
 class GPT2_Lag(nn.Module):
     def __init__(self, config: LagBehindConfig, device):
