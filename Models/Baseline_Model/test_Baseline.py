@@ -13,7 +13,7 @@ def evaluate_statistical_matrics(model, val_loader, device, max_batches):
     for x, y in val_loader:
       #val_loader can grab data infinitely so max_batches should be set
       if num_batches >= max_batches:
-          break
+        break
 
       x, y = x.to(device), y.to(device)
       logits, loss = model(x, y)
