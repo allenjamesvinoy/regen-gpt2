@@ -76,7 +76,7 @@ def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_lo
       start = time.time()
 
     if(step % 1000 == 0 and step > 0):
-      path = "/content/gdrive/MyDrive/Junior/Second Semester/CS 6787 - Advanced ML Systems/regen-gpt2/ckpt_baseline_step_{step}.pt".format(step=step)
+      path = "ckpt_baseline_step_{step}.pt".format(step=step)
       torch.save({
       "step": step,
       "model_state_dict": model.state_dict(),
