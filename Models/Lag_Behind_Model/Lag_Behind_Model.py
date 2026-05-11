@@ -127,6 +127,44 @@ class GPT2_Lag(nn.Module):
         logits_lag = self.lm_head_lag(x_lag)
         return logits_lag
     
+    @torch.no_grad()
+    def lag_prefill(self, prompt_tokens):
+        self.eval()
+        SL = len(prompt_tokens)
+        x = torch.tensor(prompt_tokens, dtype=torch.long,
+                            device=self.device).unsqueeze(0)
+        pos = torch.arange(0, SL, dtype=torch.long, device=self.device)
+        h = self.transformer.wte(x) + self.transformer.wpe(pos)
+        h = self.transformer.drop(h)
+
+        lag_kv_caches = []
+        for layer_block in self.transformer.h:
+            h, cache = layer_block(h, future=True, kv_cache=None)
+            lag_kv_caches.append(cache)
+
+        h = self.transformer.ln_f(h)
+        logits = self.lm_head_lag(h)
+        return logits, lag_kv_caches
+
+    @torch.no_grad()
+    def lag_decode_one_token(self, token, pos, lag_kv_caches):
+        self.eval()
+        x = torch.tensor([[token]], dtype=torch.long, device=self.device)
+        pos_emb = self.transformer.wpe(
+            torch.tensor([pos], dtype=torch.long, device=self.device)
+        )
+        h = self.transformer.wte(x) + pos_emb
+        h = self.transformer.drop(h)
+
+        new_caches = []
+        for layer_block, kv_cache in zip(self.transformer.h, lag_kv_caches):
+            h, cache = layer_block(h, future=True, kv_cache=kv_cache)
+            new_caches.append(cache)
+
+        h = self.transformer.ln_f(h)
+        logits = self.lm_head_lag(h)
+        return logits, new_caches
+    
 class LayerBlock(nn.Module):
   def __init__(self, config: LagBehindConfig, device):
     super().__init__()
@@ -186,14 +224,28 @@ class AttentionMultiHeadFused(nn.Module):
     #mask = torch.triu(mask, diagonal=diagonal)
     dropout_p=self.attn_drop if self.training else 0.0
     if future:
-      skip_dist = self.config.lag_behind
-      mask = torch.tril(torch.ones(SL, SL, device=x.device)).bool()
-      rows = torch.arange(skip_dist, SL, device=x.device)
-      mask[rows, rows - skip_dist] = False
-      mask = torch.where(mask, 0.0, float('-inf'))
-      attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=dropout_p)
+      if kv_cache is not None:
+          k_cache, v_cache = kv_cache
+          k = torch.cat([k_cache, k], dim=2)
+          v = torch.cat([v_cache, v], dim=2)
+          seq_len = k.size(2)
 
-      new_cache = None
+          attn_mask = torch.zeros(1, 1, 1, seq_len, device=x.device)
+          if seq_len >= 2:
+              attn_mask[0, 0, 0, seq_len - 2] = float('-inf')
+
+          attn_out  = F.scaled_dot_product_attention(q, k, v,
+                          attn_mask=attn_mask, dropout_p=dropout_p)
+          new_cache = (k, v)
+      else:
+          skip_dist = self.config.lag_behind
+          mask = torch.tril(torch.ones(SL, SL, device=x.device)).bool()
+          rows = torch.arange(skip_dist, SL, device=x.device)
+          mask[rows, rows - skip_dist] = False
+          mask = torch.where(mask, 0.0, float('-inf'))
+          attn_out  = F.scaled_dot_product_attention(q, k, v,
+                          attn_mask=mask, dropout_p=dropout_p)
+          new_cache = (k, v) if not self.training else None
     else:
       if kv_cache is not None:
         k_cache, v_cache = kv_cache
