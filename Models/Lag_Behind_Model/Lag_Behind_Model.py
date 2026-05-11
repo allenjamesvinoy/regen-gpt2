@@ -48,7 +48,7 @@ class GPT2_Lag(nn.Module):
         x_lag = self.transformer.ln_f(x_lag)
 
         logits_fwd = self.lm_head(x_fwd)
-        logits_lag = self.lm_head_lag(x_lag)
+        logits_lag = self.lm_head(x_lag)
 
         loss = None
         if y is not None:
