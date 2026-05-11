@@ -3,9 +3,9 @@ import numpy as np
 import torch
 import threading
 from datasets import load_dataset
-from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
-from Models.GPT_Model import GPTConfig
+from tqdm import tqdm
+
+
 
 class CombinedBinDataLoader:
     def __init__(self, data, split_starts, B, SL, config, seed=42):
@@ -55,7 +55,42 @@ class CombinedBinDataLoader:
         chunk_size = B * SL + 1
         all_starts = np.arange(0, len(data) - chunk_size, B * SL, dtype=np.int64)
         return CombinedBinDataLoader(data, all_starts, B, SL, config, seed=seed)
-        
+    
+
+    @staticmethod
+    def fetch_dataset(output_file, num_tokens):
+        dataset = load_dataset("HuggingFaceFW/fineweb",
+                       name="sample-10BT",
+                       split="train",
+                       streaming=True)
+
+        enc = tiktoken.get_encoding('gpt2')
+        tokens_buffer = []
+        total_tokens = 0
+        target_tokens = num_tokens
+
+        with open(output_file, 'wb') as f:
+            for item in tqdm(dataset):
+                tokens = enc.encode_ordinary(item['text'])
+                tokens.append(50256)
+                tokens_buffer.extend(tokens)
+                total_tokens += len(tokens)
+
+                if len(tokens_buffer) >= 1_000_000:
+                    np_tokens = np.array(tokens_buffer, dtype=np.uint16)
+                    f.write(np_tokens.tobytes())
+                    tokens_buffer = []
+
+                if total_tokens >= target_tokens:
+                    break
+
+            if tokens_buffer:
+                np_tokens = np.array(tokens_buffer, dtype=np.uint16)
+                f.write(np_tokens.tobytes())
+
+        print(f"Saved {total_tokens:,} tokens to {output_file}")
+
+
     def _shuffle(self):
         self.shuffled_starts = self.rng.permutation(self.split_starts)
 
