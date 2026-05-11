@@ -17,3 +17,5 @@ ckpt_baseline_step_3000.pt
 ckpt_baseline_step_3623.pt
 ckpt_BERT_6_layers_combined_loss.pt
 ckpt_BERT_6_layers.pt
+.DS_Store
+Datasets/fineweb_1B.bin

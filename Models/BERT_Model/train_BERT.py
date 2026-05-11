@@ -80,7 +80,7 @@ def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_lo
         del x, y, loss_fwd, loss_bwd, step_loss
 
       scaler.unscale_(optimizer)          # unscale before clipping
-      clip_grad_norm_(model.parameters(), max_norm=2.0)
+      clip_grad_norm_(model.parameters(), max_norm=1.0)
       scaler.step(optimizer)
       scaler.update()
       scheduler.step()

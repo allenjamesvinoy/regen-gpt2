@@ -1,5 +1,6 @@
-torch
-dataclasses
-tiktoken
+torch>=2.2
+numpy>=1.26
 datasets
+tiktoken
+tqdm
 transformers

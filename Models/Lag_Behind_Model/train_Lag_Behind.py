@@ -58,7 +58,7 @@ def estimate_loss(model, loader, device, eval_iters=10):
 def train_loop(model, optimizer, scheduler, scaler, device, train_loader, val_loader,
                train_config, model_config, lam=0.5, start_step=0, save_path = None):
   if save_path is None:
-    save_path = f'/content/drive/MyDrive/checkpoint_step{train_config.num_steps_train}_{datetime.now():%Y%m%d_%H%M%S}.pt'
+    save_path = f'checkpoint_step{train_config.num_steps_train}_{datetime.now():%Y%m%d_%H%M%S}.pt'
   tokens_per_step = train_loader.B * train_loader.SL * train_config.grad_acc_factor
   num_steps_train = train_config.num_steps_train
   num_steps_val = train_config.num_steps_val

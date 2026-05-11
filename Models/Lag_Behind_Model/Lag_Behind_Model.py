@@ -22,9 +22,7 @@ class GPT2_Lag(nn.Module):
             drop    = nn.Dropout(config.dropout)
         ))
         self.lm_head     = nn.Linear(config.embedding_dim, config.vocab_size, bias=False)
-        self.lm_head_lag = nn.Linear(config.embedding_dim, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight  # weight tying
-        self.lm_head_lag.weight = self.lm_head.weight
 
     def forward(self, x, y=None, lam=0.5):
         B, SL = x.size()
@@ -50,7 +48,7 @@ class GPT2_Lag(nn.Module):
         x_lag = self.transformer.ln_f(x_lag)
 
         logits_fwd = self.lm_head(x_fwd)
-        logits_lag = self.lm_head_lag(x_lag)
+        logits_lag = self.lm_head(x_lag)
 
         loss = None
         if y is not None:
@@ -124,7 +122,7 @@ class GPT2_Lag(nn.Module):
             x_lag, _ = layer_block(x_lag, future=True)
 
         x_lag   = self.transformer.ln_f(x_lag)
-        logits_lag = self.lm_head_lag(x_lag)
+        logits_lag = self.lm_head(x_lag)
         return logits_lag
     
     @torch.no_grad()
